@@ -1,5 +1,4 @@
-"""
-Gaussian Fit Parameter Time Series Analyzer Module
+"""Gaussian Fit Parameter Time Series Analyzer Module.
 
 A module for analyzing time series data of Gaussian fit parameters.
 This module is designed to be compatible with the FIT Detector Toolkit.
