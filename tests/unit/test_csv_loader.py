@@ -80,10 +80,10 @@ class TestCSVDataLoader:
     def sample_csv_data(self) -> Generator[pd.DataFrame, None, None]:
         """Create sample CSV data for testing."""
         data = {
-            "Ch1A": [1, 2, 3, 4, 5],
-            "Ch1B": [2, 3, 4, 5, 6],
-            "Ch2A": [3, 4, 5, 6, 7],
-            "Ch2B": [4, 5, 6, 7, 8],
+            "Ch01": [1, 2, 3, 4, 5],
+            "Ch02": [2, 3, 4, 5, 6],
+            "Ch03": [3, 4, 5, 6, 7],
+            "Ch04": [4, 5, 6, 7, 8],
         }
         df = pd.DataFrame(data, index=[0.1, 0.2, 0.3, 0.4, 0.5])
         yield df
@@ -104,7 +104,7 @@ class TestCSVDataLoader:
     ) -> None:
         """Test loading a CSV file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -120,7 +120,7 @@ class TestCSVDataLoader:
     ) -> None:
         """Test processing channel data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -133,19 +133,22 @@ class TestCSVDataLoader:
             assert "num_bins" in processed
             assert "num_channels" in processed
 
-            # Check that channels are properly summed
+            # Check that channels are processed directly
             channels = processed["channels"]
-            assert len(channels) == 2  # 2 channel pairs
+            assert len(channels) == 4  # 4 separate channels
 
-            # Channel 1 should be sum of Ch1A and Ch1B
-            ch1_data = channels["Channel_1"]
-            expected_ch1 = sample_csv_data["Ch1A"] + sample_csv_data["Ch1B"]
-            np.testing.assert_array_equal(ch1_data, expected_ch1.values)
+            # Check that each channel is processed directly
+            assert "Ch01" in channels
+            assert "Ch02" in channels
+            assert "Ch03" in channels
+            assert "Ch04" in channels
 
-            # Channel 2 should be sum of Ch2A and Ch2B
-            ch2_data = channels["Channel_2"]
-            expected_ch2 = sample_csv_data["Ch2A"] + sample_csv_data["Ch2B"]
-            np.testing.assert_array_equal(ch2_data, expected_ch2.values)
+            # Check that data is not summed
+            ch01_data = channels["Ch01"]
+            np.testing.assert_array_equal(ch01_data, sample_csv_data["Ch01"].values)
+
+            ch02_data = channels["Ch02"]
+            np.testing.assert_array_equal(ch02_data, sample_csv_data["Ch02"].values)
 
         finally:
             os.unlink(temp_path)
@@ -157,7 +160,7 @@ class TestCSVDataLoader:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix="2022-09-19-data.csv", delete=False
         ) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -168,11 +171,11 @@ class TestCSVDataLoader:
             assert info["file_path"] == temp_path
             assert info["file_name"] == os.path.basename(temp_path)
             assert info["timestamp"] == "2022-09-19T00:00:00"
-            assert info["num_channels"] == 2
+            assert info["num_channels"] == 4
             assert info["num_bins"] == 5
             assert "bin_range" in info
             assert "channels" in info
-            assert len(info["channels"]) == 2
+            assert len(info["channels"]) == 4
 
         finally:
             os.unlink(temp_path)
@@ -182,20 +185,20 @@ class TestCSVDataLoader:
     ) -> None:
         """Test getting specific channel data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
             loader.load_file(temp_path)
-            bin_values, channel_data = loader.get_channel_data(temp_path, "Channel_1")
+            bin_values, channel_data = loader.get_channel_data(temp_path, "Ch01")
 
             assert bin_values is not None
             assert channel_data is not None
             assert len(bin_values) == 5
             assert len(channel_data) == 5
 
-            # Check that the data is correct
-            expected = sample_csv_data["Ch1A"] + sample_csv_data["Ch1B"]
+            # Check that the data is correct (direct channel data)
+            expected = sample_csv_data["Ch01"]
             np.testing.assert_array_equal(channel_data, expected.values)
 
         finally:
@@ -206,7 +209,7 @@ class TestCSVDataLoader:
     ) -> None:
         """Test getting all channel data."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -214,14 +217,16 @@ class TestCSVDataLoader:
             all_data = loader.get_all_channel_data(temp_path)
 
             assert all_data is not None
-            assert len(all_data) == 2
-            assert "Channel_1" in all_data
-            assert "Channel_2" in all_data
+            assert len(all_data) == 4
+            assert "Ch01" in all_data
+            assert "Ch02" in all_data
+            assert "Ch03" in all_data
+            assert "Ch04" in all_data
 
-            # Check Channel_1 data
-            bin_vals, ch1_data = all_data["Channel_1"]
-            expected_ch1 = sample_csv_data["Ch1A"] + sample_csv_data["Ch1B"]
-            np.testing.assert_array_equal(ch1_data, expected_ch1.values)
+            # Check Ch01 data
+            bin_vals, ch01_data = all_data["Ch01"]
+            expected_ch01 = sample_csv_data["Ch01"]
+            np.testing.assert_array_equal(ch01_data, expected_ch01.values)
 
         finally:
             os.unlink(temp_path)
@@ -233,7 +238,7 @@ class TestCSVDataLoader:
         with tempfile.NamedTemporaryFile(
             mode="w", suffix="2022-09-19T1430-data.csv", delete=False
         ) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -277,7 +282,7 @@ class TestCSVDataLoader:
     ) -> None:
         """Test unloading a file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -296,7 +301,7 @@ class TestCSVDataLoader:
     ) -> None:
         """Test unloading all files."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            sample_csv_data.to_csv(f.name, sep=",")
+            sample_csv_data.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -309,18 +314,18 @@ class TestCSVDataLoader:
         finally:
             os.unlink(temp_path)
 
-    def test_odd_number_of_columns(self, loader: CSVDataLoader) -> None:
-        """Test handling odd number of columns."""
-        # Create data with odd number of columns
+    def test_direct_channel_processing(self, loader: CSVDataLoader) -> None:
+        """Test processing channels directly without summing."""
+        # Create data where each column is a channel
         data = {
-            "Ch1A": [1, 2, 3],
-            "Ch1B": [2, 3, 4],
-            "Ch2A": [3, 4, 5],
+            "Ch01": [1, 2, 3],
+            "Ch02": [2, 3, 4],
+            "Ch03": [3, 4, 5],
         }
         df = pd.DataFrame(data, index=[0.1, 0.2, 0.3])
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
-            df.to_csv(f.name, sep=",")
+            df.to_csv(f.name, sep=":")
             temp_path = f.name
 
         try:
@@ -329,7 +334,16 @@ class TestCSVDataLoader:
 
             processed = loader.process_channel_data(temp_path)
             assert processed is not None
-            assert len(processed["channels"]) == 2  # One pair + one single
+            assert len(processed["channels"]) == 3  # Three separate channels
+
+            # Check that channels are processed directly
+            assert "Ch01" in processed["channels"]
+            assert "Ch02" in processed["channels"]
+            assert "Ch03" in processed["channels"]
+
+            # Check that data is not summed
+            ch01_data = processed["channels"]["Ch01"]
+            np.testing.assert_array_equal(ch01_data, [1, 2, 3])
 
         finally:
             os.unlink(temp_path)

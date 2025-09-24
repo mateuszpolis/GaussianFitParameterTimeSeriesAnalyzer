@@ -99,20 +99,11 @@ class CSVDataLoader:
             DataFrame containing the data or None if failed
         """
         try:
-            # Try different separators
-            separators = [",", ";", ":", "\t"]
-            df = None
-
-            for sep in separators:
-                try:
-                    df = pd.read_csv(file_path, sep=sep, header=0, index_col=0)
-                    if len(df.columns) > 0:  # Valid data found
-                        break
-                except (pd.errors.EmptyDataError, pd.errors.ParserError, ValueError):
-                    continue
+            # Use colon as the only separator
+            df = pd.read_csv(file_path, sep=":", header=0, index_col=0)
 
             if df is None or len(df.columns) == 0:
-                print(f"Could not read CSV file {file_path} with any separator")
+                print(f"Could not read CSV file {file_path} with colon separator")
                 return None
 
             # Clean column names (remove whitespace)
@@ -135,10 +126,10 @@ class CSVDataLoader:
             return None
 
     def process_channel_data(self, file_path: str) -> Optional[Dict[str, np.ndarray]]:
-        """Process channel data by grouping paired columns.
+        """Process channel data where each column represents one channel.
 
-        Each channel is split into 2 columns and needs to be summed up.
-        Expects an even number of channel columns after the index column.
+        The first column is the index (bins) and each subsequent column
+        represents one channel directly.
 
         Args:
             file_path: Path to the processed file
@@ -151,30 +142,19 @@ class CSVDataLoader:
 
         df = self.loaded_files[file_path]
 
-        # Check if we have an even number of columns
-        if len(df.columns) % 2 != 0:
-            print(f"Warning: Expected even number of columns, got {len(df.columns)}")
-            # Still process, but treat odd columns as single channels
-
-        # Process channels by pairs
+        # Process each column as a separate channel
         processed_channels: Dict[str, np.ndarray] = {}
 
-        # Process columns in pairs
-        for i in range(0, len(df.columns), 2):
-            if i + 1 < len(df.columns):
-                # We have a pair of columns
-                col1, col2 = df.columns[i], df.columns[i + 1]
-                channel_name = f"Channel_{i//2 + 1}"
-
-                # Sum the two columns
-                channel_data = (df[col1] + df[col2]).values
-                processed_channels[channel_name] = channel_data
+        for i, col in enumerate(df.columns):
+            # Use the original column name as channel name, or create a default name
+            if col.strip():  # If column name is not empty
+                channel_name = col.strip()
             else:
-                # Odd column, treat as single channel
-                col = df.columns[i]
-                channel_name = f"Channel_{i//2 + 1}"
-                channel_data = df[col].values
-                processed_channels[channel_name] = channel_data
+                channel_name = f"Channel_{i + 1}"
+
+            # Store the channel data directly
+            channel_data = df[col].values
+            processed_channels[channel_name] = channel_data
 
         return {
             "channels": processed_channels,

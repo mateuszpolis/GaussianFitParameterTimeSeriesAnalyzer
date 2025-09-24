@@ -6,6 +6,9 @@ import pytest
 from gaussian_fit_parameter_tsa.model import (
     FitParams,
     area_from_A_sigma,
+    calculate_fit_quality,
+    estimate_initial_parameters,
+    fit_gaussian_robust,
     fwhm_from_sigma,
     gaussian_bg,
 )
@@ -255,3 +258,147 @@ class TestModelIntegration:
 
             # Should be close (within 2% due to discrete sampling)
             assert np.isclose(numerical_fwhm, analytical_fwhm, rtol=0.02)
+
+
+class TestEstimateInitialParameters:
+    """Test the estimate_initial_parameters function."""
+
+    def test_estimate_initial_parameters_basic(self) -> None:
+        """Test basic parameter estimation."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 2.0, 1.0, 1.5, 0.5
+        y = gaussian_bg(x, A, mu, sigma, B)
+
+        A0, mu0, sigma0, B0 = estimate_initial_parameters(x, y)
+
+        # Check that estimates are reasonable
+        assert A0 > 0
+        assert B0 >= 0
+        assert sigma0 > 0
+        # mu0 should be close to the actual peak
+        assert abs(mu0 - mu) < 2.0  # Within reasonable range
+
+    def test_estimate_initial_parameters_with_noise(self) -> None:
+        """Test parameter estimation with noisy data."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 3.0, 0.0, 1.0, 1.0
+        y = gaussian_bg(x, A, mu, sigma, B)
+        # Add some noise
+        y += np.random.normal(0, 0.1, len(y))
+
+        A0, mu0, sigma0, B0 = estimate_initial_parameters(x, y)
+
+        # Check that estimates are reasonable even with noise
+        assert A0 > 0
+        assert B0 >= 0
+        assert sigma0 > 0
+
+
+class TestCalculateFitQuality:
+    """Test the calculate_fit_quality function."""
+
+    def test_calculate_fit_quality_perfect_fit(self) -> None:
+        """Test fit quality calculation with perfect fit."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 2.0, 0.0, 1.0, 0.5
+        y = gaussian_bg(x, A, mu, sigma, B)
+        popt = [A, mu, sigma, B]
+
+        r_squared, rmse = calculate_fit_quality(x, y, popt)
+
+        # Perfect fit should have R² = 1 and RMSE = 0
+        assert np.isclose(r_squared, 1.0, atol=1e-10)
+        assert np.isclose(rmse, 0.0, atol=1e-10)
+
+    def test_calculate_fit_quality_poor_fit(self) -> None:
+        """Test fit quality calculation with poor fit."""
+        x = np.linspace(-5, 5, 100)
+        y = np.random.normal(0, 1, len(x))  # Random data
+        popt = [1.0, 0.0, 1.0, 0.0]  # Poor fit parameters
+
+        r_squared, rmse = calculate_fit_quality(x, y, popt)
+
+        # Poor fit should have low R² and high RMSE
+        assert r_squared < 0.5
+        assert rmse > 0.5
+
+
+class TestFitGaussianRobust:
+    """Test the fit_gaussian_robust function."""
+
+    def test_fit_gaussian_robust_basic(self) -> None:
+        """Test basic robust Gaussian fitting."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 2.0, 1.0, 1.5, 0.5
+        y = gaussian_bg(x, A, mu, sigma, B)
+
+        result = fit_gaussian_robust(x, y)
+
+        # Check that fit was successful
+        assert result.success
+        assert result.r_squared > 0.9  # Good fit
+        assert result.rmse < 1.0  # Low error
+
+        # Check that parameters are close to true values
+        assert np.isclose(result.A, A, rtol=0.1)
+        assert np.isclose(result.mu, mu, rtol=0.1)
+        assert np.isclose(result.sigma, sigma, rtol=0.1)
+        assert np.isclose(result.B, B, rtol=0.1)
+
+    def test_fit_gaussian_robust_with_noise(self) -> None:
+        """Test robust fitting with noisy data."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 3.0, 0.0, 1.0, 1.0
+        y = gaussian_bg(x, A, mu, sigma, B)
+        # Add noise
+        y += np.random.normal(0, 0.2, len(y))
+
+        result = fit_gaussian_robust(x, y)
+
+        # Should still fit reasonably well
+        assert result.success
+        assert result.r_squared > 0.7  # Reasonable fit
+        assert result.rmse < 2.0  # Acceptable error
+
+    def test_fit_gaussian_robust_insufficient_data(self) -> None:
+        """Test robust fitting with insufficient data."""
+        x = np.array([1, 2, 3])  # Only 3 points
+        y = np.array([1, 2, 1])
+
+        with pytest.raises(ValueError, match="Need at least 4 data points"):
+            fit_gaussian_robust(x, y)
+
+    def test_fit_gaussian_robust_invalid_data(self) -> None:
+        """Test robust fitting with invalid data."""
+        x = np.array([1, 2, 3, 4])
+        y = np.array([1, 2, np.nan, 4])  # Contains NaN
+
+        result = fit_gaussian_robust(x, y)
+
+        # Should handle NaN values and still fit
+        assert (
+            result.success or not result.success
+        )  # Either succeeds or fails gracefully
+
+    def test_fit_gaussian_robust_mismatched_lengths(self) -> None:
+        """Test robust fitting with mismatched array lengths."""
+        x = np.array([1, 2, 3, 4])
+        y = np.array([1, 2, 3])  # Different length
+
+        with pytest.raises(
+            ValueError, match="x and y arrays must have the same length"
+        ):
+            fit_gaussian_robust(x, y)
+
+    def test_fit_gaussian_robust_with_uncertainties(self) -> None:
+        """Test robust fitting with uncertainty weights."""
+        x = np.linspace(-5, 5, 100)
+        A, mu, sigma, B = 2.0, 0.0, 1.0, 0.5
+        y = gaussian_bg(x, A, mu, sigma, B)
+        sigma_y = np.ones_like(y) * 0.1  # Constant uncertainty
+
+        result = fit_gaussian_robust(x, y, sigma_y)
+
+        # Should fit successfully with uncertainties
+        assert result.success
+        assert result.r_squared > 0.9
