@@ -9,10 +9,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from gaussian_fit_parameter_tsa.csv_loader import (
-    CSVDataLoader,
-    parse_timestamp_from_filename,
-)
+from gaussian_fit_parameter_tsa.csv_loader import CSVDataLoader
 from gaussian_fit_parameter_tsa.model import (
     FitParams,
     fit_gaussian_robust,
@@ -91,24 +88,6 @@ class GaussianFitApp:
         )
         self.channel_combo.grid(row=0, column=1, padx=(0, 10), sticky="ew")
         self.channel_combo.bind("<<ComboboxSelected>>", self.on_channel_selected)
-
-        ttk.Button(channel_frame, text="Fit Gaussian", command=self.fit_gaussian).grid(
-            row=0, column=2, padx=(0, 5)
-        )
-        ttk.Button(
-            channel_frame, text="Show Time Series", command=self.show_time_series
-        ).grid(row=0, column=3)
-
-        # Add zoom controls
-        ttk.Button(channel_frame, text="Reset Zoom", command=self.reset_zoom).grid(
-            row=0, column=4, padx=(5, 0)
-        )
-        ttk.Button(channel_frame, text="Zoom to Fit", command=self.zoom_to_fit).grid(
-            row=0, column=5, padx=(5, 0)
-        )
-        ttk.Button(channel_frame, text="Help", command=self.show_help).grid(
-            row=0, column=6, padx=(5, 0)
-        )
 
         channel_frame.columnconfigure(1, weight=1)
 
@@ -202,10 +181,6 @@ class GaussianFitApp:
     def setup_keyboard_shortcuts(self) -> None:
         """Set up keyboard shortcuts for the application."""
         # Bind keyboard shortcuts
-        self.root.bind("<Control-r>", lambda e: self.reset_zoom())
-        self.root.bind("<Control-f>", lambda e: self.zoom_to_fit())
-        self.root.bind("<Control-g>", lambda e: self.fit_gaussian())
-        self.root.bind("<Control-t>", lambda e: self.show_time_series())
         self.root.bind("<Control-o>", lambda e: self.load_files())
         self.root.bind("<Control-Shift-O>", lambda e: self.load_folder())
 
@@ -253,6 +228,9 @@ class GaussianFitApp:
             if self.csv_loader.load_file(file_path):
                 self.loaded_files.append(file_path)
                 loaded_count += 1
+
+                # Automatically fit Gaussian for all channels in this file
+                self.auto_fit_gaussian_for_file(file_path)
             else:
                 try:
                     messagebox.showerror(
@@ -274,6 +252,45 @@ class GaussianFitApp:
                 messagebox.showerror("Error", "No files were loaded successfully.")
             except tk.TclError:
                 print("Error: No files were loaded successfully.")
+
+    def auto_fit_gaussian_for_file(self, file_path: str) -> None:
+        """Automatically fit Gaussian for all channels in a file."""
+        file_info = self.csv_loader.get_file_info(file_path)
+        if not file_info or "channels" not in file_info:
+            return
+
+        channels = file_info["channels"]
+
+        # Initialize fit results for this file
+        if file_path not in self.fit_results:
+            self.fit_results[file_path] = {}
+
+        for channel in channels:
+            # Get channel data
+            channel_data = self.csv_loader.get_channel_data(file_path, channel)
+            if not channel_data:
+                continue
+
+            bin_values, histogram_values = channel_data
+
+            try:
+                # Use the robust fitting function
+                fit_result = fit_gaussian_robust(bin_values, histogram_values)
+
+                if fit_result.success:
+                    # Store fit results
+                    self.fit_results[file_path][channel] = fit_result
+                else:
+                    print(
+                        f"Warning: Gaussian fit failed for "
+                        f"{os.path.basename(file_path)} - {channel}"
+                    )
+
+            except Exception as e:
+                print(
+                    f"Error fitting Gaussian for "
+                    f"{os.path.basename(file_path)} - {channel}: {str(e)}"
+                )
 
     def update_file_combo(self) -> None:
         """Update the file combo box with loaded files."""
@@ -319,6 +336,9 @@ class GaussianFitApp:
         self.current_channel = self.channel_combo.get()
         if self.current_channel:
             self.plot_raw_data()
+            # Automatically display fitted data and parameters if available
+            self.display_fitted_data()
+            self.update_parameters_table()
 
     def plot_raw_data(self) -> None:
         """Plot raw data for the selected file and channel."""
@@ -346,77 +366,29 @@ class GaussianFitApp:
 
         self.raw_canvas.draw()
 
-    def fit_gaussian(self) -> None:
-        """Fit Gaussian to the selected channel data."""
+    def display_fitted_data(self) -> None:
+        """Display fitted data if available for the current file and channel."""
         if not self.current_file or not self.current_channel:
-            try:
-                messagebox.showwarning(
-                    "No Selection", "Please select a file and channel first."
-                )
-            except tk.TclError:
-                # Handle case where tkinter is not properly initialized
-                print("Warning: Please select a file and channel first.")
             return
 
-        # Get channel data
-        channel_data = self.csv_loader.get_channel_data(
-            self.current_file, self.current_channel
-        )
-        if not channel_data:
-            try:
-                messagebox.showerror(
-                    "Error", "No data available for the selected channel."
+        # Check if we have fit results for this file and channel
+        if (
+            self.current_file in self.fit_results
+            and self.current_channel in self.fit_results[self.current_file]
+        ):
+            # Get channel data
+            channel_data = self.csv_loader.get_channel_data(
+                self.current_file, self.current_channel
+            )
+            if channel_data:
+                bin_values, histogram_values = channel_data
+                fit_result = self.fit_results[self.current_file][self.current_channel]
+
+                # Plot fitted data
+                popt = np.array(
+                    [fit_result.A, fit_result.mu, fit_result.sigma, fit_result.B]
                 )
-            except tk.TclError:
-                print("Error: No data available for the selected channel.")
-            return
-
-        bin_values, histogram_values = channel_data
-
-        try:
-            # Use the robust fitting function
-            fit_result = fit_gaussian_robust(bin_values, histogram_values)
-
-            if not fit_result.success:
-                try:
-                    messagebox.showerror(
-                        "Fit Error", "Gaussian fit failed. Check your data quality."
-                    )
-                except tk.TclError:
-                    print("Fit Error: Gaussian fit failed. Check your data quality.")
-                return
-
-            # Store fit results
-            if self.current_file not in self.fit_results:
-                self.fit_results[self.current_file] = {}
-
-            self.fit_results[self.current_file][self.current_channel] = fit_result
-
-            # Plot fitted data
-            popt = np.array(
-                [fit_result.A, fit_result.mu, fit_result.sigma, fit_result.B]
-            )
-            self.plot_fitted_data(bin_values, histogram_values, popt)
-
-            # Update parameters table
-            self.update_parameters_table()
-
-            # Show success message with fit quality
-            success_msg = (
-                f"Gaussian fit completed successfully!\n"
-                f"R² = {fit_result.r_squared:.4f}\n"
-                f"RMSE = {fit_result.rmse:.2f}"
-            )
-            try:
-                messagebox.showinfo("Success", success_msg)
-            except tk.TclError:
-                print(f"Success: {success_msg}")
-
-        except Exception as e:
-            try:
-                messagebox.showerror("Fit Error", f"Failed to fit Gaussian: {str(e)}")
-            except tk.TclError:
-                print(f"Fit Error: Failed to fit Gaussian: {str(e)}")
+                self.plot_fitted_data(bin_values, histogram_values, popt)
 
     def plot_fitted_data(
         self, bin_values: np.ndarray, histogram_values: np.ndarray, popt: np.ndarray
@@ -498,179 +470,6 @@ class GaussianFitApp:
                 self.params_tree.insert(
                     "", "end", values=(param, value, uncertainty, unit)
                 )
-
-    def show_time_series(self) -> None:
-        """Show time series plot for the selected channel across all files."""
-        if not self.current_channel:
-            try:
-                messagebox.showwarning("No Selection", "Please select a channel first.")
-            except tk.TclError:
-                print("Warning: Please select a channel first.")
-            return
-
-        # Collect data for time series
-        times = []
-        parameters: Dict[str, List[float]] = {
-            "A": [],
-            "mu": [],
-            "sigma": [],
-            "B": [],
-            "fwhm": [],
-            "area": [],
-        }
-
-        for file_path in self.loaded_files:
-            if (
-                file_path in self.fit_results
-                and self.current_channel in self.fit_results[file_path]
-            ):
-                # Get timestamp
-                timestamp = parse_timestamp_from_filename(file_path)
-                if timestamp:
-                    times.append(timestamp)
-
-                    # Get parameters
-                    params = self.fit_results[file_path][self.current_channel]
-                    parameters["A"].append(params.A)
-                    parameters["mu"].append(params.mu)
-                    parameters["sigma"].append(params.sigma)
-                    parameters["B"].append(params.B)
-                    parameters["fwhm"].append(params.fwhm)
-                    parameters["area"].append(params.area)
-
-        if not times:
-            try:
-                messagebox.showwarning(
-                    "No Data", "No fitted data available for time series analysis."
-                )
-            except tk.TclError:
-                print("Warning: No fitted data available for time series analysis.")
-            return
-
-        # Sort by time
-        sorted_indices = np.argsort(times)
-        times = [times[i] for i in sorted_indices]
-        for key in parameters:
-            parameters[key] = [parameters[key][i] for i in sorted_indices]
-
-        # Plot time series
-        self.ts_ax.clear()
-
-        # Create subplots for different parameters
-        self.ts_fig.clear()
-
-        # Create 2x3 subplot layout
-        axes = []
-        for i in range(6):
-            ax = self.ts_fig.add_subplot(2, 3, i + 1)
-            axes.append(ax)
-
-        self.ts_fig.suptitle(f"Time Series Analysis - {self.current_channel}")
-
-        param_names = ["A", "mu", "sigma", "B", "fwhm", "area"]
-        param_labels = [
-            "Amplitude",
-            "Center (μ)",
-            "Std. Dev. (σ)",
-            "Background",
-            "FWHM",
-            "Area",
-        ]
-
-        for i, (param, label) in enumerate(zip(param_names, param_labels)):
-            axes[i].plot(times, parameters[param], "o-", markersize=4)
-            axes[i].set_title(label)
-            axes[i].set_xlabel("Time")
-            axes[i].set_ylabel("Value")
-            axes[i].grid(True, alpha=0.3)
-
-            # Rotate x-axis labels
-            axes[i].tick_params(axis="x", rotation=45)
-
-        self.ts_fig.tight_layout()
-
-        # Update the time series canvas
-        self.ts_canvas.draw()
-
-    def reset_zoom(self) -> None:
-        """Reset zoom on all plots."""
-        # Reset raw data plot
-        if hasattr(self, "raw_ax"):
-            self.raw_ax.relim()
-            self.raw_ax.autoscale()
-            self.raw_canvas.draw()
-
-        # Reset fitted data plot
-        if hasattr(self, "fitted_ax"):
-            self.fitted_ax.relim()
-            self.fitted_ax.autoscale()
-            self.fitted_canvas.draw()
-
-        # Reset time series plot
-        if hasattr(self, "ts_fig"):
-            for ax in self.ts_fig.get_axes():
-                ax.relim()
-                ax.autoscale()
-            self.ts_canvas.draw()
-
-    def zoom_to_fit(self) -> None:
-        """Zoom to fit the data in all plots."""
-        # Get current tab
-        current_tab = self.notebook.index(self.notebook.select())
-
-        if current_tab == 0:  # Raw data tab
-            if hasattr(self, "raw_ax") and self.raw_ax.has_data():
-                self.raw_ax.relim()
-                self.raw_ax.autoscale()
-                self.raw_canvas.draw()
-        elif current_tab == 1:  # Fitted data tab
-            if hasattr(self, "fitted_ax") and self.fitted_ax.has_data():
-                self.fitted_ax.relim()
-                self.fitted_ax.autoscale()
-                self.fitted_canvas.draw()
-        elif current_tab == 2:  # Time series tab
-            if hasattr(self, "ts_fig"):
-                for ax in self.ts_fig.get_axes():
-                    if ax.has_data():
-                        ax.relim()
-                        ax.autoscale()
-                self.ts_canvas.draw()
-
-    def show_help(self) -> None:
-        """Show help dialog with keyboard shortcuts and usage instructions."""
-        help_text = """Gaussian Fit Parameter Time Series Analyzer - Help
-
-KEYBOARD SHORTCUTS:
-• Ctrl+O: Load files
-• Ctrl+Shift+O: Load folder
-• Ctrl+G: Fit Gaussian
-• Ctrl+T: Show Time Series
-• Ctrl+R: Reset zoom on all plots
-• Ctrl+F: Zoom to fit current plot
-
-USAGE:
-1. Load CSV files using 'Load Files' or 'Load Folder' buttons
-2. Select a file from the dropdown
-3. Select a channel from the channel dropdown
-4. Click 'Fit Gaussian' to perform the fit
-5. Use 'Show Time Series' to see parameter evolution over time
-6. Use the navigation toolbars to zoom and pan on plots
-7. Use 'Reset Zoom' to return to original view
-8. Use 'Zoom to Fit' to fit data in current plot
-
-PLOT FEATURES:
-• All plots have built-in zoom and pan functionality
-• Use mouse wheel to zoom in/out
-• Click and drag to pan
-• Use navigation toolbar buttons for more control
-• Right-click for context menu options
-
-For more information, see the documentation."""
-
-        try:
-            messagebox.showinfo("Help", help_text)
-        except tk.TclError:
-            print(help_text)
 
 
 def main() -> None:
