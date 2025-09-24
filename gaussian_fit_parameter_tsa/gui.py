@@ -9,7 +9,10 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
-from gaussian_fit_parameter_tsa.csv_loader import CSVDataLoader
+from gaussian_fit_parameter_tsa.csv_loader import (
+    CSVDataLoader,
+    parse_timestamp_from_filename,
+)
 from gaussian_fit_parameter_tsa.model import (
     FitParams,
     fit_gaussian_robust,
@@ -241,6 +244,9 @@ class GaussianFitApp:
 
         if loaded_count > 0:
             self.update_file_combo()
+            # Update time series if a channel is currently selected
+            if self.current_channel:
+                self.update_time_series()
             try:
                 messagebox.showinfo(
                     "Success", f"Loaded {loaded_count} file(s) successfully."
@@ -339,6 +345,8 @@ class GaussianFitApp:
             # Automatically display fitted data and parameters if available
             self.display_fitted_data()
             self.update_parameters_table()
+            # Automatically update time series
+            self.update_time_series()
 
     def plot_raw_data(self) -> None:
         """Plot raw data for the selected file and channel."""
@@ -389,6 +397,99 @@ class GaussianFitApp:
                     [fit_result.A, fit_result.mu, fit_result.sigma, fit_result.B]
                 )
                 self.plot_fitted_data(bin_values, histogram_values, popt)
+
+    def update_time_series(self) -> None:
+        """Update time series plot for the selected channel across all files."""
+        if not self.current_channel:
+            return
+
+        # Collect data for time series
+        times = []
+        parameters: Dict[str, List[float]] = {
+            "A": [],
+            "mu": [],
+            "sigma": [],
+            "B": [],
+            "fwhm": [],
+            "area": [],
+        }
+
+        for file_path in self.loaded_files:
+            if (
+                file_path in self.fit_results
+                and self.current_channel in self.fit_results[file_path]
+            ):
+                # Get timestamp
+                timestamp = parse_timestamp_from_filename(file_path)
+                if timestamp:
+                    times.append(timestamp)
+
+                    # Get parameters
+                    params = self.fit_results[file_path][self.current_channel]
+                    parameters["A"].append(params.A)
+                    parameters["mu"].append(params.mu)
+                    parameters["sigma"].append(params.sigma)
+                    parameters["B"].append(params.B)
+                    parameters["fwhm"].append(params.fwhm)
+                    parameters["area"].append(params.area)
+
+        if not times:
+            # Clear the time series plot if no data
+            self.ts_fig.clear()
+            self.ts_ax = self.ts_fig.add_subplot(111)
+            self.ts_ax.text(
+                0.5,
+                0.5,
+                "No fitted data available for time series analysis.",
+                ha="center",
+                va="center",
+                transform=self.ts_ax.transAxes,
+            )
+            self.ts_ax.set_title(f"Time Series Analysis - {self.current_channel}")
+            self.ts_canvas.draw()
+            return
+
+        # Sort by time
+        sorted_indices = np.argsort(times)
+        times = [times[i] for i in sorted_indices]
+        for key in parameters:
+            parameters[key] = [parameters[key][i] for i in sorted_indices]
+
+        # Plot time series
+        self.ts_fig.clear()
+
+        # Create 2x3 subplot layout
+        axes = []
+        for i in range(6):
+            ax = self.ts_fig.add_subplot(2, 3, i + 1)
+            axes.append(ax)
+
+        self.ts_fig.suptitle(f"Time Series Analysis - {self.current_channel}")
+
+        param_names = ["A", "mu", "sigma", "B", "fwhm", "area"]
+        param_labels = [
+            "Amplitude",
+            "Center (μ)",
+            "Std. Dev. (σ)",
+            "Background",
+            "FWHM",
+            "Area",
+        ]
+
+        for i, (param, label) in enumerate(zip(param_names, param_labels)):
+            axes[i].plot(times, parameters[param], "o-", markersize=4)
+            axes[i].set_title(label)
+            axes[i].set_xlabel("Time")
+            axes[i].set_ylabel("Value")
+            axes[i].grid(True, alpha=0.3)
+
+            # Rotate x-axis labels
+            axes[i].tick_params(axis="x", rotation=45)
+
+        self.ts_fig.tight_layout()
+
+        # Update the time series canvas
+        self.ts_canvas.draw()
 
     def plot_fitted_data(
         self, bin_values: np.ndarray, histogram_values: np.ndarray, popt: np.ndarray
